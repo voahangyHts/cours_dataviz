@@ -7,12 +7,16 @@ Adresse :     http://localhost:8501
 import json
 import os
 
+import numpy as np
+
 import pandas as pd
 import plotly.express as px
 import sqlalchemy
 import streamlit as st
 
 st.set_page_config(page_title="NYC Taxi — analyse", layout="wide")
+
+JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 PG = (f"postgresql+psycopg2://{os.getenv('PG_USER', 'cours')}:{os.getenv('PG_PASSWORD', 'cours')}"
       f"@{os.getenv('PG_HOST', 'postgres')}:5432/{os.getenv('PG_DB', 'nyctaxi')}")
@@ -27,7 +31,10 @@ def charger():
     zones = pd.read_sql("SELECT * FROM gold_zones", moteur)
     horaires["heure"] = pd.to_datetime(horaires["heure_pickup"]).dt.hour
     horaires["jour"] = pd.to_datetime(horaires["heure_pickup"]).dt.date
+
+    horaires["jour_semaine"] = pd.to_datetime(horaires["heure_pickup"]).dt.dayofweek.map(dict(enumerate(JOURS)))
     return horaires, zones
+
 
 
 @st.cache_data
@@ -47,7 +54,11 @@ arrondissements = sorted(a for a in horaires["arrondissement"].dropna().unique()
 choix = st.sidebar.multiselect("Arrondissements", arrondissements, default=arrondissements)
 plage = st.sidebar.slider("Heures de prise en charge", 0, 23, (0, 23))
 
-h = horaires[horaires["arrondissement"].isin(choix) & horaires["heure"].between(*plage)]
+jours_choisis = st.sidebar.multiselect("Jours de la semaine", JOURS, default=JOURS)
+
+h = horaires[horaires["arrondissement"].isin(choix)
+             & horaires["heure"].between(*plage)
+             & horaires["jour_semaine"].isin(jours_choisis)]
 z = zones[zones["arrondissement"].isin(choix)]
 
 # --- Indicateurs -----------------------------------------------------------------
@@ -72,13 +83,26 @@ fig = px.bar(top, x="courses", y="zone", color="arrondissement", orientation="h"
              labels={"courses": "Courses (mois)", "zone": ""}, title="Les 15 zones de départ les plus actives")
 g2.plotly_chart(fig, use_container_width=True)
 
+pb = (h.assign(pb_total=h["pourboire_moyen"] * h["courses"])
+       .groupby("heure", as_index=False)[["pb_total", "courses"]].sum())
+pb["pourboire_moyen"] = pb["pb_total"] / pb["courses"]
+fig = px.line(pb, x="heure", y="pourboire_moyen", markers=True,
+              labels={"heure": "Heure de prise en charge", "pourboire_moyen": "Pourboire moyen ($)"},
+              title="Le pourboire moyen dépend-il de l'heure ?")
+st.plotly_chart(fig, use_container_width=True)
+
 if geo is not None:
-    fig = px.choropleth_map(z, geojson=geo, locations="PULocationID", featureidkey="properties.LocationID",
-                            color="prix_moyen", hover_name="zone",
-                            hover_data={"courses": True, "prix_moyen": ":.2f", "PULocationID": False},
+    z_log = z[z["courses"] > 0].copy()
+    z_log["log_courses"] = np.log10(z_log["courses"])
+    fig = px.choropleth_map(z_log, geojson=geo, locations="PULocationID", featureidkey="properties.LocationID",
+                            color="log_courses", hover_name="zone",
+                            hover_data={"courses": True, "prix_moyen": ":.2f", "log_courses": False, "PULocationID": False},
                             color_continuous_scale="Viridis", map_style="carto-positron",
                             center={"lat": 40.73, "lon": -73.94}, zoom=9.3, opacity=0.75,
-                            labels={"prix_moyen": "Prix moyen ($)"}, title="Prix moyen par zone de départ")
+                            title="Nombre de courses par zone de départ (échelle logarithmique)")
+    fig.update_coloraxes(colorbar=dict(title="Courses (mois)",
+                                       tickvals=[0, 1, 2, 3, 4, 5],
+                                       ticktext=["1", "10", "100", "1 000", "10 000", "100 000"]))
     fig.update_layout(height=600, margin={"l": 0, "r": 0, "t": 40, "b": 0})
     st.plotly_chart(fig, use_container_width=True)
 else:
