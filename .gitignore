@@ -6,3 +6,4 @@ metastore_db/
 derby.log
 __pycache__/
 .DS_Store
+iframe_figures/
