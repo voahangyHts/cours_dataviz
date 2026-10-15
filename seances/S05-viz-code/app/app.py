@@ -108,5 +108,16 @@ if geo is not None:
 else:
     st.info("Carte indisponible : lancez d'abord le notebook 05a pour créer data/zones.geojson.")
 
+st.subheader("Où envoyer les chauffeurs ? Revenu à capter par arrondissement et par heure")
+nb_jours = max(h["jour"].nunique(), 1)
+rev = h.groupby(["arrondissement", "heure"], as_index=False)["revenu"].sum()
+rev["revenu_par_heure"] = rev["revenu"] / nb_jours
+ordre = rev.groupby("arrondissement")["revenu"].sum().sort_values(ascending=False).index.tolist()
+matrice = rev.pivot(index="arrondissement", columns="heure", values="revenu_par_heure").reindex(ordre).fillna(0)
+fig = px.imshow(matrice, aspect="auto", color_continuous_scale="Blues",
+                labels={"x": "Heure de prise en charge", "y": "", "color": "Revenu moyen ($/h)"},
+                title="Plus la case est foncée, plus il y a d'argent à prendre à cette heure-là")
+st.plotly_chart(fig, use_container_width=True)
+
 with st.expander("Voir les données"):
     st.dataframe(z.sort_values("courses", ascending=False), use_container_width=True)
